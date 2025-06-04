@@ -72,7 +72,7 @@ void drive(int dist, int speedL, int speedR) {
     countR = encoders.getCountsRight();
 
     // --- Calculate speeds ---
-    speedL = speedLC + (countR*dir - countL*dir)l;
+    speedL = speedLC + (countR*dir - countL*dir);
     if(countL*dir >= pulseCount){ speedL = SPEED_STOP; }
     if(countR*dir >= pulseCount){ speedR = SPEED_STOP; }
 
@@ -148,7 +148,7 @@ float ultrasonic(){
 
   // ===== Sort =====
   for(int i=0; i<arraySize; i++){
-    for(int j=0; j<arraySize; j++;){
+    for(int j=0; j<arraySize; j++){
       if(measurements[j] > measurements[i]){
         float temp = measurements[i];
         measurements[i] = measurements[j];
