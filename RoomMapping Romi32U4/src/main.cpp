@@ -1,5 +1,7 @@
 #include <Romi32U4.h>
+#include <Arduino.h>
 #include <math.h>
+#include <float.h>
 
 Romi32U4Encoders encoders;
 Romi32U4Motors motors;
@@ -10,7 +12,7 @@ Romi32U4ButtonA buttonA;
 #define WHEEL_D             7
 #define ROBOT_D             15
 #define ROBOT_R             8
-#define COUNT_PER_REV        1437
+#define COUNT_PER_REV       1437
 
 #define PIN_TRIG            11
 #define PIN_ECHO            2
@@ -33,6 +35,8 @@ Romi32U4ButtonA buttonA;
 #define SENSOR_MAX          150
 #define ANGLE_COR           0.93
 
+#define MAX_EDGE_LEN        10.0//cm
+
 // --- Logic ---
 #define ON                  1
 #define OFF                 0
@@ -42,17 +46,27 @@ bool mapping = false;
 float positionX = 0;
 float positionY = 0;
 
-// ===== Pointer-List =====
-// This is to store all points and link with the other nearest points
-// The linked points will then simulate the walls detected.
-// Todo
+// ===== Lined-List Node =====
+// Each measurement becomes a Node in a circular list
+struct Node {
+  int x, y;     // Coordinates of the point
+  Node* cw;     // Next point clockwise
+  Node* ccw;    // Next point counter-clockwise
+};
+Node* head = nullptr;   // Start of circular linked list
 
 
 // ===== Function Declarations =====
 uint16_t countForDistance(float distance);
 uint16_t countForAngle(float angle);
+void rotate(int ang, int speedL, int speedR);
+float ultrasonic();
 float degToRad(float degrees);
 float radToDeg(float radians);
+void insert(int x, int y);
+void findGaps();
+void printOutline();
+void clearList();
 
 
 void setup(){
@@ -66,16 +80,124 @@ void loop(){
     buttonA.waitForButton();
     ledRed(OFF);
     delay(TIME_DELAY);
-
-    // ===== Measure Area =====
-        // --- Take measurement ---
-        // --- Record/Organize point ---
-        // --- Turn ---
-    // ===== Reposition? =====
-        // --- If needed, reposition and repeat ---
-        // --- If not needed, end ---
     
-    // ===== Print points =====
+    // Clear previous data
+    clearList();
+
+    // ===== Scan Area =====
+    const float step = 360.0f / NUM_READINGS;
+    float distances[NUM_READINGS];
+    for (int i = 0; i < NUM_READINGS; i++) {
+      // Measure distance
+      distances[i] = ultrasonic();
+      // Rotate by step
+      rotate(step, SPEED_TURN_L, SPEED_TURN_R);
+    }
+    // return to start
+    rotate(-360.0f, SPEED_TURN_L, SPEED_TURN_R);
+
+    // ===== Insert Points =====
+    for (int i=0; i<NUM_READINGS; i++) {
+      float thetaRad = degToRad(i * step);
+      float r = distances[i] + ROBOT_R;
+      int xi = positionX + int(r * cosf(thetaRad));
+      int yi = positionY + int(r * sinf(thetaRad));
+      insert(xi, yi);
+    }
+
+    // ===== Output Outline and Gaps =====
+    printOutline();
+    findGaps();
+}
+
+
+// ===== Linked-List Functions =====
+// Euclidean distance between node and (x,y)
+static float distPt(const Node* a, int x, int y) {
+  float dx = a->x - x;
+  float dy = a->y - y;
+  return sqrtf(dx*dx + dy*dy);
+}
+
+void insert(int x, int y) {
+  // New node
+  Node* P = (Node*)malloc(sizeof(Node));
+  P->x = x;
+  P->y = y;
+
+  // Empty list?
+  if(!head) {
+    head = P;
+    P->cw = P;
+    P->ccw = P;
+    return;
+  }
+
+  // Find best insertion edge
+  Node* bestA = nullptr;
+  Node* bestB = nullptr;
+  float bestCost = FLT_MAX;
+
+  Node* cur = head;
+  do {
+    Node* nxt = cur->cw;
+    float oldLen = distPt(cur, nxt->x, nxt->y);
+    float cost = distPt(cur, x, y) + distPt(nxt, x, y) - oldLen;
+    if (cost < bestCost) {
+      bestCost = cost;
+      bestA = cur;
+      bestB = nxt;
+    }
+    cur = nxt;
+  } while (cur != head);
+
+  // Insert P between bestA and bestB
+  bestA->cw = P;
+  P->ccw = bestA;
+  P->cw = bestB;
+  bestB->ccw = P;
+}
+
+void findGaps() {
+  if (!head) return;
+  Node* cur = head;
+  Serial.println("Gaps at midpoints: ");
+  do{
+    Node* nxt = cur->cw;
+    float edgeLen = distPt(cur, nxt->x, nxt->y);
+    if (edgeLen > MAX_EDGE_LEN) {
+      float midX = (cur->x + nxt->x) * 0.5f;
+      float midY = (cur->y + nxt->y) * 0.5f;
+      Serial.print(midX);
+      Serial.print(',');
+      Serial.print(midY);
+    }
+    cur = nxt;
+  } while (cur != head);
+}
+
+void printOutline() {
+  if (!head) return;
+  Serial.println("Outline:");
+  Node* cur = head;
+  do {
+    Serial.print(cur->x);
+    Serial.print(',');
+    Serial.println(cur->y);
+    cur = cur->cw;
+  } while (cur != head);
+}
+
+void clearList() {
+  if (!head) return;
+  Node* cur = head->cw;
+  while (cur != head) {
+    Node* nxt = cur->cw;
+    free(cur);
+    cur = nxt;
+  }
+  free(head);
+  head = nullptr;
 }
 
 
